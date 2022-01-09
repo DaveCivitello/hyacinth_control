@@ -1,0 +1,100 @@
+---
+title: "Hyacinth invasion and control analysis"
+author: "DJC"
+date: "9/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analysis for Dan's Chapter 3
+
+We're going to use interrupted time series GAMMs to analyze Dan's mesocosm experiment that assessed the effects of water hyacinth invasion and control on schisto.
+
+# Data
+First, we need to bring in the data, which are in three sheets (along with a 4th sheet that contains the treatment labels for tanks)
+
+## Egg data
+```{r egg_data}
+setwd("C:/RData/Dan dissertation")
+
+# Egg count master sheet 
+eggs = read.csv("Summer2019Eggs.csv")
+
+# Egg master sheet has the number of observed eggs (not egg masses!) in each tank that had any. So, we need to sum up and
+# add in zeros for those tank-dates where no eggs were found
+Eggs = aggregate(Eggs.mass ~ Tank*Week, FUN=sum, data=eggs, drop=F)
+Eggs[which(is.na(Eggs[,"Eggs.mass"])),"Eggs.mass"] = 0
+
+# Other data sheets have eggs on "week zero", we want to add NAs so that the data sheets eventually align
+Eggs0 = data.frame("Tank" = c(1:10, 12:23, 27:40), "Week" = 0, "Eggs.mass" = NA)
+# Egg data is now in correct orientation
+Eggs = rbind(Eggs0, Eggs)
+Eggs
+```
+## Cerc, plant, and Periphyton data
+
+```{r}
+
+CercsPlantsPeri = subset(read.csv("Summer2019HyacinthExpMaster.csv"), !Tank %in% c(11, 24:26), select=c("Tank","Week", "Plant.mass", "Cercs", "Peri"))
+
+
+```
+
+
+## Snail data 
+```{r snail_data}
+hya = read.csv("Hyacinth_control_MASTER_041421.csv")
+hya[,"Tank"] = as.factor(hya[,"Tank"])
+hya[,"Biomass"] = 0.0096*hya[,"Length"]^3
+
+abundance = aggregate(Length ~ Tank*Week, data=hya, FUN=length, drop=F)
+
+labels = subset(read.csv("Dan_hyacinth_labels.csv"), !(Tank %in% c(11, 24:26)))
+
+abundance = cbind(labels,"Week" = abundance$Week, "Abundance" = abundance$Length)
+biomass = aggregate(Biomass ~ Tank*Week, data=hya, FUN=sum, drop=F)
+
+tank_summary = cbind(abundance, "Biomass" =  biomass$Biomass, "Eggs" = Eggs$Eggs.mass, "Plants" = CercsPlantsPeri$Plant.mass, "Cercariae" = CercsPlantsPeri$Cercs, "Periphyton" = CercsPlantsPeri$Peri)
+
+# treatment_summary
+SEM = function(x){sd(x)/sqrt(na.omit(length(x)))}
+
+mean_abundance = aggregate(Abundance ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
+SE_abundance = aggregate(Abundance ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
+
+mean_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
+SE_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
+
+treatment_summary = data.frame(mean_abundance, "Abundance_SE" = SE_abundance$Abundance,
+                               "Biomass" = mean_biomass$Biomass, "Biomass_SE" = SE_biomass$Biomass)
+
+treatment_summary
+```
+# Plots
+
+```{r}
+p1 = ggplot(data=treatment_summary, aes(x=Week, y=Abundance, 
+            group=interaction(Plant, Management)), colour=interaction(Plant, Management)) + 
+  theme(legend.position = c(0.1, 0.9))+
+  ylab("Snail abundance ± SE") +
+  geom_point(aes(colour=interaction(Plant, Management))) +
+  geom_linerange(aes(ymin = Abundance - Abundance_SE, ymax=Abundance + Abundance_SE, colour=interaction(Plant, Management))) +
+  geom_line(aes(colour=interaction(Plant, Management)))
+
+p1
+```
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
