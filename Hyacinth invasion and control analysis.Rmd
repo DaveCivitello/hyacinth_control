@@ -87,6 +87,105 @@ p1 = ggplot(data=treatment_summary, aes(x=Week, y=Abundance,
 p1
 ```
 
+```{r invasion_effects}
+library(mgcv)
+invasion = subset(tank_summary, Management == "none ")
+invasion[,"IsHyacinth"] = ifelse(invasion[,"Plant"]=="Hyacinth", 1, 0)
+invasion[,"Tank"] = as.factor(invasion[,"Tank"])
+invasion2 = subset(invasion, is.finite(Abundance))
+
+m1 = gamm(Abundance ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion2)
+summary(m1$gam)
+plot(m1$gam) # Significantly more snails in Week ~5, significantly fewer in weeks 8+
+
+invasion2 = subset(invasion, is.finite(Biomass))
+
+m2 = gamm(Biomass ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion2)
+summary(m2$gam)
+plot(m2$gam) # Significantly more biomass in Week ~5, significantly less in weeks 8+
+
+invasion2 = subset(invasion, is.finite(Periphyton))
+
+m3 = gamm(Periphyton ~ s(Week, k=8)+ s(Week, by = IsHyacinth, k=8)+ s(Tank, bs="re"), niterPQL=50,
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion2)
+summary(m3$gam)
+plot(m3$gam) # Significantly less peruphyton the whole time
+
+invasion4 = subset(invasion, is.finite(Eggs))
+
+m4 = gamm(Eggs ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion4)
+summary(m4$gam)
+plot(m4$gam) # Significantly fewer eggs from Week ~2 on
+
+invasion5 = subset(invasion, is.finite(Cercariae))
+
+m5 = gamm(Cercariae ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion5)
+summary(m5$gam)
+plot(m5$gam) # significantly more cercariae throughout almost the whole experiment
+
+```
+
+
+```{r management_effects}
+management = subset(tank_summary, Plant == "Hyacinth")
+head(management)
+# "intervened" accounts for a "step effect" of intervention, but have to dummy label by treatment
+management[,"intervened"] = ifelse(management[,"Management"]  != "none " & management[,"Week"] > 7, 1, 0)
+management[,"removed"] = ifelse(management[,"intervened"] & management[,"Management"] == "remove", 1, 0)
+management[,"chopped"] = ifelse(management[,"intervened"] & management[,"Management"] == "Chop", 1, 0)
+
+
+# "XXX_time" accounts for nonlinear effect of that intervention
+management[,"chop_time"] = pmax(0, (management[,"chopped"]*management[,"Week"]) - 7)
+management[,"removed_time"] = pmax(0, (management[,"removed"]*management[,"Week"]) - 7)
+
+management[,"Management"] = as.factor(management[,"Management"])
+management[,"Tank"] = as.factor(management[,"Tank"])
+
+
+management1 = subset(management, is.finite(Abundance))
+
+m1 = gamm(Abundance ~ s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), 
+          niterPQL=50, family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management1,   
+          control=list(msMaxIter=100))
+summary(m1$gam)
+plot(m1$gam) # No significant diffs
+
+management2 = subset(management, is.finite(Biomass))
+
+m2 = gamm(Biomass ~  s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=management2)
+summary(m2$gam)
+plot(m2$gam) # Chopped caused a bump in biomass
+
+management3 = subset(management, is.finite(Periphyton))
+
+m3 = gamm(Periphyton ~ s(Week, k=8) + removed + chopped + s(chop_time, k=4) + s(removed_time, k=4) + 
+          s(Tank, bs="re"), niterPQL=50, family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), 
+          data=management3)
+summary(m3$gam)
+plot(m3$gam) # Chopped caused more periphyton over remaining course of experiment
+
+management4 = subset(management, is.finite(Eggs))
+
+m4 = gamm(Eggs ~  s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management4)
+summary(m4$gam)
+plot(m4$gam) # Both interventions very significant
+
+management5 = subset(management, is.finite(Cercariae))
+
+m5 = gamm(Cercariae ~ s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management5)
+summary(m5$gam)
+plot(m5$gam) # No differences in cercs
+
+```
+
 
 
 ## Including Plots
