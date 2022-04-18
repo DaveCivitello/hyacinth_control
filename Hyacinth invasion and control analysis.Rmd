@@ -11,17 +11,32 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Analysis for Dan's Chapter 3
 
-We're going to use interrupted time series GAMMs to analyze Dan's mesocosm experiment that assessed the effects of water hyacinth invasion and control on schisto.
+Dan conducted a mesocosm experiment that established snail populations in aquatic communities that were invaded (or not) by water hyacinth and then implemented plant management (destruction or removal) after sampling on week seven post establishment. Communities were sampled for 17 weeks from establishment, measuring algal production, snail abundance, snail population total biomass, snail egg laying, and total cercarial production from the entire population.
+
+We're going to use GAMMs to model the "baseline" dynamics and then use additional smooths to account for the interventions. This stems from specific hypothesized contrasts between treatments (e.g., invaded vs. uninvaded; unmanaged invasion vs. the two management options).
+
+We also just summed up cercs to test for differences across the entire experiment, which ignores timing.
+
+```{r echo=FALSE, messages=FALSE}
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+theme_set(theme_cowplot())
+library(mgcv)
+library(glmmTMB)
+library(itsadug)
+library(emmeans)
+```
+
+
 
 # Data
 First, we need to bring in the data, which are in three sheets (along with a 4th sheet that contains the treatment labels for tanks)
 
 ## Egg data
 ```{r egg_data}
-setwd("C:/RData/Dan dissertation")
-
 # Egg count master sheet 
-eggs = read.csv("Summer2019Eggs.csv")
+eggs = read.csv("C:/RData/Dan dissertation/Summer2019Eggs.csv")
 
 # Egg master sheet has the number of observed eggs (not egg masses!) in each tank that had any. So, we need to sum up and
 # add in zeros for those tank-dates where no eggs were found
@@ -32,21 +47,19 @@ Eggs[which(is.na(Eggs[,"Eggs.mass"])),"Eggs.mass"] = 0
 Eggs0 = data.frame("Tank" = c(1:10, 12:23, 27:40), "Week" = 0, "Eggs.mass" = NA)
 # Egg data is now in correct orientation
 Eggs = rbind(Eggs0, Eggs)
-Eggs
+
 ```
 ## Cerc, plant, and Periphyton data
 
 ```{r}
-
+# Some of the data is stored in a tank-level master sheet
 CercsPlantsPeri = subset(read.csv("Summer2019HyacinthExpMaster.csv"), !Tank %in% c(11, 24:26), select=c("Tank","Week", "Plant.mass", "Cercs", "Peri"))
-
-
 ```
 
 
 ## Snail data 
 ```{r snail_data}
-hya = read.csv("Hyacinth_control_MASTER_041421.csv")
+hya = read.csv("C:/RData/Hyacinth_control_MASTER_041421.csv")
 hya[,"Tank"] = as.factor(hya[,"Tank"])
 hya[,"Biomass"] = 0.0096*hya[,"Length"]^3
 
@@ -62,73 +75,249 @@ tank_summary = cbind(abundance, "Biomass" =  biomass$Biomass, "Eggs" = Eggs$Eggs
 # treatment_summary
 SEM = function(x){sd(x)/sqrt(na.omit(length(x)))}
 
+# Data from the snail master sheet
 mean_abundance = aggregate(Abundance ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
 SE_abundance = aggregate(Abundance ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
 
 mean_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
 SE_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
 
+# Data from egg sheet
+mean_eggs = aggregate(Eggs ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
+SE_eggs = aggregate(Eggs ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
+colnames(SE_eggs)[4] = "Eggs_SE"
+
 treatment_summary = data.frame(mean_abundance, "Abundance_SE" = SE_abundance$Abundance,
                                "Biomass" = mean_biomass$Biomass, "Biomass_SE" = SE_biomass$Biomass)
 
+# Data that were collected in the other datasheet
+mean_cercs = aggregate(Cercariae ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
+SE_cercs = aggregate(Cercariae ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
+colnames(SE_cercs)[4] = "Cercariae_SE"
+
+
+
+mean_peri = aggregate(Periphyton ~ Plant*Management*Week, FUN=mean, data=tank_summary)
+SE_peri = aggregate(Periphyton ~ Plant*Management*Week, FUN=SEM, data=tank_summary)
+colnames(SE_peri)[4] = "Periphyton_SE"
+
+mean_plants = aggregate(Plants ~ Plant*Management*Week, FUN=mean, data=tank_summary)
+SE_plants = aggregate(Plants ~ Plant*Management*Week, FUN=SEM, data=tank_summary)
+colnames(SE_plants)[4] = "Plant_SE"
+
+treatment_summary = left_join(treatment_summary, mean_cercs, by=c("Plant", "Management", "Week"))
+treatment_summary = left_join(treatment_summary, SE_cercs, by=c("Plant", "Management", "Week"))
+
+treatment_summary = left_join(treatment_summary, mean_peri, by=c("Plant", "Management", "Week"))
+treatment_summary = left_join(treatment_summary, SE_peri, by=c("Plant", "Management", "Week"))
+
+treatment_summary = left_join(treatment_summary, mean_plants, by=c("Plant", "Management", "Week"))
+treatment_summary = left_join(treatment_summary, SE_plants, by=c("Plant", "Management", "Week"))
+
+treatment_summary = left_join(treatment_summary, mean_eggs, by=c("Plant", "Management", "Week"))
+treatment_summary = left_join(treatment_summary, SE_eggs, by=c("Plant", "Management", "Week"))
+
+
 treatment_summary
 ```
-# Plots
 
-```{r}
-p1 = ggplot(data=treatment_summary, aes(x=Week, y=Abundance, 
-            group=interaction(Plant, Management)), colour=interaction(Plant, Management)) + 
-  theme(legend.position = c(0.1, 0.9))+
-  ylab("Snail abundance ± SE") +
-  geom_point(aes(colour=interaction(Plant, Management))) +
-  geom_linerange(aes(ymin = Abundance - Abundance_SE, ymax=Abundance + Abundance_SE, colour=interaction(Plant, Management))) +
-  geom_line(aes(colour=interaction(Plant, Management)))
-
-p1
-```
+## The first set of tests correspond to the prediction that hyacinth invasion will alter snail abundance, biomass, periphyton, egg laying, and cercariae
 
 ```{r invasion_effects}
-library(mgcv)
 invasion = subset(tank_summary, Management == "none ")
 invasion[,"IsHyacinth"] = ifelse(invasion[,"Plant"]=="Hyacinth", 1, 0)
 invasion[,"Tank"] = as.factor(invasion[,"Tank"])
-invasion2 = subset(invasion, is.finite(Abundance))
+invasion1 = subset(invasion, is.finite(Abundance))
 
 m1 = gamm(Abundance ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
-           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion2)
+           family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion1)
 summary(m1$gam)
-plot(m1$gam) # Significantly more snails in Week ~5, significantly fewer in weeks 8+
+#plot(m1$gam) # Significantly more snails in Week ~5, significantly fewer in weeks 8+
 
 invasion2 = subset(invasion, is.finite(Biomass))
 
 m2 = gamm(Biomass ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
            family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion2)
 summary(m2$gam)
-plot(m2$gam) # Significantly more biomass in Week ~5, significantly less in weeks 8+
+#plot(m2$gam) # Significantly more biomass in Week ~5, significantly less in weeks 8+
 
-invasion2 = subset(invasion, is.finite(Periphyton))
+invasion3 = subset(invasion, is.finite(Periphyton))
 
 m3 = gamm(Periphyton ~ s(Week, k=8)+ s(Week, by = IsHyacinth, k=8)+ s(Tank, bs="re"), niterPQL=50,
-           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion2)
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion3)
 summary(m3$gam)
-plot(m3$gam) # Significantly less peruphyton the whole time
+#plot(m3$gam) # Significantly less peruphyton the whole time
 
 invasion4 = subset(invasion, is.finite(Eggs))
 
 m4 = gamm(Eggs ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
            family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion4)
 summary(m4$gam)
-plot(m4$gam) # Significantly fewer eggs from Week ~2 on
+#plot(m4$gam) # Significantly fewer eggs from Week ~2 on
 
 invasion5 = subset(invasion, is.finite(Cercariae))
 
 m5 = gamm(Cercariae ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re"), niterPQL=50,
            family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=invasion5)
 summary(m5$gam)
-plot(m5$gam) # significantly more cercariae throughout almost the whole experiment
+#plot(m5$gam) # significantly more cercariae throughout almost the whole experiment
 
 ```
 
+
+```{r fig2}
+
+
+# make treatment level summary data frame for invasion contrast
+invasion_summary = subset(treatment_summary, Management == "none ")
+invasion_summary[,"IsHyacinth"] = as.factor(ifelse(invasion_summary[,"Plant"] == "Hyacinth", 1, 0))
+
+# Panel 2A - Periphyton
+p2Afit = plot_smooth(m3$gam, view="Week", plot_all=c("IsHyacinth"), rug=F, transform=exp, se=1, shade=T, 
+                    ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+p2Afit[,"IsHyacinth"] = as.factor(p2Afit[,"IsHyacinth"])
+
+
+p2A =  ggplot(data=p2Afit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(values=c("black", "green3"), na.value=NA) +
+  scale_fill_manual(values=c("black", "green3"), na.value=NA) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Periphyton, colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Periphyton - Periphyton_SE,
+                                        ymax=Periphyton + Periphyton_SE, colour=IsHyacinth), inherit.aes = F) 
+p2A
+
+
+# Panel 2B - Snail abundance
+p2Bfit = plot_smooth(m1$gam, view="Week", plot_all=c("IsHyacinth"), rug=F, transform=exp, se=1, shade=T, 
+                    ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+p2Bfit[,"IsHyacinth"] = as.factor(p2Bfit[,"IsHyacinth"])
+
+
+p2B =  ggplot(data=p2Bfit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(values=c("black", "green3"), na.value=NA) +
+  scale_fill_manual(values=c("black", "green3"), na.value=NA) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Abundance, colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Abundance - Abundance_SE,
+                                        ymax=Abundance + Abundance_SE, colour=IsHyacinth), inherit.aes = F) 
+p2B
+
+# Panel 2C - Snail biomass
+p2Cfit = plot_smooth(m2$gam, view="Week", plot_all=c("IsHyacinth"), rug=F, transform=exp, se=1, shade=T, 
+                    ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+p2Cfit[,"IsHyacinth"] = as.factor(p2Cfit[,"IsHyacinth"])
+
+
+p2C =  ggplot(data=p2Cfit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(values=c("black", "green3"), na.value=NA) +
+  scale_fill_manual(values=c("black", "green3"), na.value=NA) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Biomass, colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Biomass - Biomass_SE,
+                                        ymax=Biomass + Biomass_SE, colour=IsHyacinth), inherit.aes = F) 
+p2C
+
+# Panel 2D - Snail egg laying
+p2Dfit = plot_smooth(m4$gam, view="Week", plot_all=c("IsHyacinth"), rug=F, transform=exp, se=1, shade=T, 
+                    ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+p2Dfit[,"IsHyacinth"] = as.factor(p2Dfit[,"IsHyacinth"])
+
+
+p2D =  ggplot(data=p2Dfit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(values=c("black", "green3"), na.value=NA) +
+  scale_fill_manual(values=c("black", "green3"), na.value=NA) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Eggs, colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Eggs - Eggs_SE,
+                                        ymax=Eggs + Eggs_SE, colour=IsHyacinth), inherit.aes = F) 
+p2D
+
+
+
+# Panel 1E - Cecariae
+p2Efit = plot_smooth(m5$gam, view="Week", plot_all=c("IsHyacinth"), rug=F, transform=exp, se=1, shade=T, 
+                    ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+p2Efit[,"IsHyacinth"] = as.factor(p2Efit[,"IsHyacinth"])
+
+
+p2E =  ggplot(data=p2Efit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(values=c("black", "green3"), na.value=NA) +
+  scale_fill_manual(values=c("black", "green3"), na.value=NA) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Cercariae, colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Cercariae - Cercariae_SE,
+                                        ymax=Cercariae + Cercariae_SE, colour=IsHyacinth), inherit.aes = F) 
+p2E
+
+spacer = ggplot(data=p2Efit, aes(x=Week, y=fit)) +
+  geom_blank() + theme_void()
+
+Fig2 = plot_grid(spacer,p2A, spacer, p2D,
+                 spacer,p2B, spacer,p2E,
+                 spacer,p2C, spacer, spacer,
+                 spacer,spacer, spacer, spacer,
+                 align="v", ncol=4, nrow=4, axis="rltb", rel_heights=c(1, 1, 1, 0.1), rel_widths = c(0.08, 1, 0.12, 1)) +
+  # y-axis labels
+  draw_label("Periphyton productivity ± SE", x=0.03, y=0.84, angle=90, size=10) +
+  draw_label("Snail abundance ± SE", x=0.03, y=0.52, angle=90, size=10) +
+  draw_label("Snail biomass, mg ± SE", x=0.03, y=0.21, angle=90, size=10) +
+  draw_label("Snail eggs ± SE", x=0.54, y=0.84, angle=90, size=10) +
+  draw_label("Cercariael production ± SE", x=0.54, y=0.52, angle=90, size=10) +
+
+  # x-axis labels
+  draw_label("Week", x = 0.55, y = 0.01, size=10, vjust=0) +
+  # panel labels
+  draw_label("A", x = 0.16, y = 0.97, size=10) + 
+  draw_label("D", x = 0.66, y = 0.97, size=10) + 
+  draw_label("B", x = 0.16, y = 0.64, size=10) +
+  draw_label("E", x = 0.66, y = 0.64, size=10) +
+  draw_label("C", x = 0.16, y = 0.33, size=10) +
+
+  # Legend panel
+# legend
+  draw_label("Invasion status", x=0.78, y=0.23, size=11)+
+  draw_label("•", x=0.71, y=0.20, size=28, colour="black")+ draw_label("Control", x=0.73, y=0.20, size=10, hjust=0)+ # Alt+0149 for bullet point
+  draw_label("•", x=0.71, y=0.18, size=28, colour="green3")+ draw_label("Hyacinth", x=0.73, y=0.18, size=10, hjust=0)
+
+Fig2
+
+save_plot("C:/RData/Fig2_Hyacinth.png", Fig2, ncol=2, nrow=3, base_height=2, base_asp = 1.1, dpi=600, units="in")
+```
+
+
+
+## The second set of tests correspond to the prediction that given hyacinth invasion, management interventions will alter snail abundance, biomass, periphyton, egg laying, and cercariae
 
 ```{r management_effects}
 management = subset(tank_summary, Plant == "Hyacinth")
@@ -149,7 +338,7 @@ management[,"Tank"] = as.factor(management[,"Tank"])
 
 management1 = subset(management, is.finite(Abundance))
 
-m1 = gamm(Abundance ~ s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), 
+m1 = gamm(Abundance ~ s(Week) + s(chop_time) + s(removed_time) + s(Tank, bs="re"), 
           niterPQL=50, family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management1,   
           control=list(msMaxIter=100))
 summary(m1$gam)
@@ -157,14 +346,14 @@ plot(m1$gam) # No significant diffs
 
 management2 = subset(management, is.finite(Biomass))
 
-m2 = gamm(Biomass ~  s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+m2 = gamm(Biomass ~  s(Week) + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
            family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=management2)
 summary(m2$gam)
 plot(m2$gam) # Chopped caused a bump in biomass
 
 management3 = subset(management, is.finite(Periphyton))
 
-m3 = gamm(Periphyton ~ s(Week, k=8) + removed + chopped + s(chop_time, k=4) + s(removed_time, k=4) + 
+m3 = gamm(Periphyton ~ s(Week, k=8) + s(chop_time, k=4) + s(removed_time, k=4) + 
           s(Tank, bs="re"), niterPQL=50, family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), 
           data=management3)
 summary(m3$gam)
@@ -172,28 +361,231 @@ plot(m3$gam) # Chopped caused more periphyton over remaining course of experimen
 
 management4 = subset(management, is.finite(Eggs))
 
-m4 = gamm(Eggs ~  s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+m4 = gamm(Eggs ~  s(Week) + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
            family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management4)
 summary(m4$gam)
 plot(m4$gam) # Both interventions very significant
 
 management5 = subset(management, is.finite(Cercariae))
 
-m5 = gamm(Cercariae ~ s(Week) + removed + chopped + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
+m5 = gamm(Cercariae ~ s(Week) + s(chop_time) + s(removed_time) + s(Tank, bs="re"), niterPQL=50,
            family=quasipoisson, correlation=corCAR1(form=~Week|Tank), data=management5)
 summary(m5$gam)
 plot(m5$gam) # No differences in cercs
 
 ```
 
+```{r fig3}
+# Data frame to extract predictions
+manage_pred_data = subset(management, Tank %in% c(2, 3, 17), select = c("Tank", "Treat", "Week", "chop_time", "removed_time"))
 
 
-## Including Plots
 
-You can also embed plots, for example:
+# Panel 3A - periphyton
+pred <- predict(m3$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+manage_peri_data = data.frame(manage_pred_data, pred)
+
+management_summary = subset(treatment_summary, Plant == "Hyacinth")
+management_summary[,"Treat"] = rep(c("Hyacinth.Chop", "Hyacinth", "Hyacinth.remove"), times=18)
+
+
+p3A =  ggplot(data=manage_peri_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_peri_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=management_summary, aes(x=Week, y=Periphyton, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=management_summary, aes(x=Week, ymin=Periphyton - Periphyton_SE,
+            ymax=Periphyton + Periphyton_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+
+p3A
+
+# Panel 3B - Snail abundance
+pred <- predict(m1$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
+
+manage_abund_data = data.frame(manage_pred_data, pred)
+
+
+p3B =  ggplot(data=manage_abund_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_abund_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=management_summary, aes(x=Week, y=Abundance, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=management_summary, aes(x=Week, ymin=Abundance - Abundance_SE,
+            ymax=Abundance + Abundance_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+
+p3B
+
+# Panel 3C - snail biomass
+pred <- predict(m2$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
+
+manage_biomass_data = data.frame(manage_pred_data, pred)
+
+p3C =  ggplot(data=manage_biomass_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_biomass_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=management_summary, aes(x=Week, y=Biomass, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=management_summary, aes(x=Week, ymin=Biomass - Biomass_SE,
+            ymax=Biomass + Biomass_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+
+p3C
+
+
+# Panel 3D - snail eggs
+pred <- predict(m4$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
+
+manage_egg_data = data.frame(manage_pred_data, pred)
+
+p3D =  ggplot(data=manage_egg_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_egg_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=management_summary, aes(x=Week, y=Eggs, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=management_summary, aes(x=Week, ymin=Eggs - Eggs_SE,
+            ymax=Eggs + Eggs_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+
+p3D
+
+
+
+
+# Panel 3E - Cecariae
+manage_pred_data = subset(manage_pred_data, Week >= 4)
+pred <- predict(m5$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
+
+manage_cerc_data = data.frame(manage_pred_data, pred)
+
+p3E =  ggplot(data=manage_cerc_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = "none",
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_cerc_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=management_summary, aes(x=Week, y=Cercariae, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=management_summary, aes(x=Week, ymin=Cercariae - Cercariae_SE,
+            ymax=Cercariae + Cercariae_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+
+p3E
+
+spacer = ggplot(data=p1Efit, aes(x=Week, y=fit)) +
+  geom_blank() + theme_void()
+
+Fig3 = plot_grid(spacer,p3A, spacer, p3D,
+                 spacer,p3B, spacer,p3E,
+                 spacer,p3C, spacer, spacer,
+                 spacer,spacer, spacer, spacer,
+                 align="v", ncol=4, nrow=4, axis="rltb", rel_heights=c(1, 1, 1, 0.1), rel_widths = c(0.08, 1, 0.12, 1)) +
+  # y-axis labels
+  draw_label("Periphyton productivity ± SE", x=0.03, y=0.84, angle=90, size=10) +
+  draw_label("Snail abundance ± SE", x=0.03, y=0.52, angle=90, size=10) +
+  draw_label("Snail biomass, mg ± SE", x=0.03, y=0.21, angle=90, size=10) +
+  draw_label("Snail eggs ± SE", x=0.54, y=0.84, angle=90, size=10) +
+  draw_label("Cercariael production ± SE", x=0.54, y=0.52, angle=90, size=10) +
+
+  
+  # x-axis labels
+  draw_label("Week", x = 0.55, y = 0.01, size=10, vjust=0) +
+  # panel labels
+  draw_label("A", x = 0.16, y = 0.97, size=10) + 
+  draw_label("D", x = 0.66, y = 0.97, size=10) + 
+  draw_label("B", x = 0.16, y = 0.64, size=10) +
+  draw_label("E", x = 0.66, y = 0.64, size=10) +
+  draw_label("C", x = 0.16, y = 0.33, size=10) +
+
+  # Legend panel
+# legend
+  draw_label("Management status", x=0.78, y=0.23, size=11)+
+  draw_label("•", x=0.71, y=0.20, size=28, colour="green3")+ draw_label("Unmanaged", x=0.73, y=0.20, size=10, hjust=0)+ # Alt+0149 for bullet point
+  draw_label("•", x=0.71, y=0.18, size=28, colour="black")+ draw_label("Destruction", x=0.73, y=0.18, size=10, hjust=0)+
+    draw_label("•", x=0.71, y=0.16, size=28, colour="blue")+ draw_label("Removal", x=0.73, y=0.16, size=10, hjust=0)
+
+Fig3
+
+save_plot("C:/RData/Fig3_Hyacinth.png", Fig3, ncol=2, nrow=3, base_height=2, base_asp = 1.1, dpi=600, units="in")
+
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+## The third test is a direct analysis of cumulative cercarial production across all of the treatments compared against the control
+```{r}
+cumulative_cercs = aggregate(Cercariae ~ Tank*Plant*Management, FUN=sum, data=subset(tank_summary, Week > 0))
+
+# drop control-chop
+#cumulative_cercs = subset(cumulative_cercs, Plant != "Control" | Management != "Chop")
+cumulative_cercs[,"Treatment"] = paste(cumulative_cercs[,"Plant"], cumulative_cercs[,"Management"])
+# Rename for plotting
+cumulative_cercs[,"Treatment"][which(cumulative_cercs[,"Treatment"] == "Control none ")] = "Uninvaded\ncontrol"
+cumulative_cercs[,"Treatment"][which(cumulative_cercs[,"Treatment"] == "Control Chop")] = "Uninvaded control\nplus detritus"
+cumulative_cercs[,"Treatment"][which(cumulative_cercs[,"Treatment"] == "Hyacinth none ")] = "Unmanaged\nhyacinth"
+cumulative_cercs[,"Treatment"][which(cumulative_cercs[,"Treatment"] == "Hyacinth Chop")] = "Hyacinth\ndestruction"
+cumulative_cercs[,"Treatment"][which(cumulative_cercs[,"Treatment"] == "Hyacinth remove")] = "Hyacinth\nremoval"
+cumulative_cercs[,"Treatment"] <- factor(cumulative_cercs[,"Treatment"], levels = c("Uninvaded\ncontrol", "Uninvaded control\nplus detritus", "Unmanaged\nhyacinth", "Hyacinth\ndestruction", "Hyacinth\nremoval"))
+
+
+
+m1 = glmmTMB(Cercariae ~ Treatment, data=cumulative_cercs, family="nbinom2")
+summary(m1)
+
+Fig4 = ggplot(data = cumulative_cercs, aes(x = Treatment, y = Cercariae)) + geom_boxplot()  +
+      theme(axis.ticks.length = unit(-1.5, "mm"),
+            axis.title = element_text(size=14),
+            axis.text = element_text(size=11)) +  xlab("Treatment") +  ylab("Cumulative Cercarial production") +
+      annotate("text", x = 3, y = 4500, label = "*", size=10) + annotate("text", x = 4, y = 5500, label = "*", size=10) 
+
+Fig4
+ggsave(filename = "C:/RData/Fig4_Hyacinth.png", plot=Fig4, scale=1)
+
+```
+
