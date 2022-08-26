@@ -56,7 +56,6 @@ Eggs = rbind(Eggs0, Eggs)
 CercsPlantsPeri = subset(read.csv("Summer2019HyacinthExpMaster.csv"), !Tank %in% c(11, 24:26), select=c("Tank","Week", "Plant.mass", "Cercs", "Peri"))
 ```
 
-
 ## Snail data 
 ```{r snail_data}
 hya = read.csv("C:/RData/Hyacinth_control_MASTER_041421.csv")
@@ -70,7 +69,9 @@ labels = subset(read.csv("Dan_hyacinth_labels.csv"), !(Tank %in% c(11, 24:26)))
 abundance = cbind(labels,"Week" = abundance$Week, "Abundance" = abundance$Length)
 biomass = aggregate(Biomass ~ Tank*Week, data=hya, FUN=sum, drop=F)
 
-tank_summary = cbind(abundance, "Biomass" =  biomass$Biomass, "Eggs" = Eggs$Eggs.mass, "Plants" = CercsPlantsPeri$Plant.mass, "Cercariae" = CercsPlantsPeri$Cercs, "Periphyton" = CercsPlantsPeri$Peri)
+meansize = biomass[,"Biomass"]/abundance[,"Abundance"]
+
+tank_summary = cbind(abundance, "Biomass" =  biomass$Biomass, "Mean_size" = meansize, "Eggs" = Eggs$Eggs.mass, "Plants" = CercsPlantsPeri$Plant.mass, "Cercariae" = CercsPlantsPeri$Cercs, "Periphyton" = CercsPlantsPeri$Peri)
 
 # treatment_summary
 SEM = function(x){sd(x)/sqrt(na.omit(length(x)))}
@@ -82,20 +83,23 @@ SE_abundance = aggregate(Abundance ~ Plant*Management*Week, FUN=SEM, data=tank_s
 mean_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
 SE_biomass = aggregate(Biomass ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
 
+mean_meansize = aggregate(Mean_size ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
+SE_meansize = aggregate(Mean_size ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
+
+
 # Data from egg sheet
 mean_eggs = aggregate(Eggs ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
 SE_eggs = aggregate(Eggs ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
 colnames(SE_eggs)[4] = "Eggs_SE"
 
 treatment_summary = data.frame(mean_abundance, "Abundance_SE" = SE_abundance$Abundance,
-                               "Biomass" = mean_biomass$Biomass, "Biomass_SE" = SE_biomass$Biomass)
+                               "Biomass" = mean_biomass$Biomass, "Biomass_SE" = SE_biomass$Biomass, 
+                               "Mean_size" = mean_meansize$Mean_size, "Mean_size_SE" = SE_meansize$Mean_size)
 
 # Data that were collected in the other datasheet
 mean_cercs = aggregate(Cercariae ~ Plant*Management*Week, FUN=mean, data=tank_summary, na.action = na.omit)
 SE_cercs = aggregate(Cercariae ~ Plant*Management*Week, FUN=SEM, data=tank_summary, na.action = na.omit)
 colnames(SE_cercs)[4] = "Cercariae_SE"
-
-
 
 mean_peri = aggregate(Periphyton ~ Plant*Management*Week, FUN=mean, data=tank_summary)
 SE_peri = aggregate(Periphyton ~ Plant*Management*Week, FUN=SEM, data=tank_summary)
@@ -120,6 +124,27 @@ treatment_summary = left_join(treatment_summary, SE_eggs, by=c("Plant", "Managem
 
 treatment_summary
 ```
+
+```{r fig1}
+plant_mean = aggregate(Plants ~ Plant*Management*Week, FUN=mean, data=tank_summary)
+plant_SE = aggregate(Plants ~ Plant*Management*Week, FUN=SEM, data=tank_summary)
+
+plant_summary = data.frame(plant_mean, "Plants_SE" = plant_SE$Plants)
+
+plant_summary$Management = factor(plant_summary$Management, levels = c("none ", "Chop", "remove"))
+
+Fig1 = ggplot(data = plant_summary, aes(x=Week, y=Plants, group=Management, shape=Management, linetype=Management)) +  geom_line() + geom_linerange(aes(ymin = Plants - Plants_SE, ymax = Plants + Plants_SE)) + ylab("Water hyacinth wet mass, g ± SE") + geom_point(size=3, fill="white") + geom_vline(xintercept = 7, linetype = "dashed") + 
+  scale_y_continuous(breaks = seq(0, 1250, by = 250), limits = c(0, 1250)) + scale_shape_manual(name = "Management", values = c(21, 22, 23), labels = c("None", "Destruction", "Removal")) +
+  scale_linetype_manual(name = "Management", values = c("solid", "dashed", "dotted"), labels = c("None", "Destruction", "Removal")) + 
+  theme(legend.position = c(0.1, 0.7)) + theme(legend.key.width = unit(2, "line"), legend.key.height = unit(0, "line"))
+
+ggsave2(filename="C:/RData/Fig1_Hyacinth.png", plot=Fig1)
+#save_plot("C:/RData/Fig1_Hyacinth.png", Fig1, ncol=1, nrow=1, base_height=2, base_asp = 1.1, dpi=600, units="in")
+
+
+```
+
+
 
 ## The first set of tests correspond to the prediction that hyacinth invasion will alter snail abundance, biomass, periphyton, egg laying, and cercariae
 
@@ -289,11 +314,11 @@ Fig2 = plot_grid(spacer,p2A, spacer, p2D,
                  spacer,spacer, spacer, spacer,
                  align="v", ncol=4, nrow=4, axis="rltb", rel_heights=c(1, 1, 1, 0.1), rel_widths = c(0.08, 1, 0.12, 1)) +
   # y-axis labels
-  draw_label("Periphyton productivity ± SE", x=0.03, y=0.84, angle=90, size=10) +
-  draw_label("Snail abundance ± SE", x=0.03, y=0.52, angle=90, size=10) +
+  draw_label("Periphyton productivity, AU ± SE", x=0.03, y=0.84, angle=90, size=10) +
+  draw_label("Snail abundance, # ± SE", x=0.03, y=0.52, angle=90, size=10) +
   draw_label("Snail biomass, mg ± SE", x=0.03, y=0.21, angle=90, size=10) +
-  draw_label("Snail eggs ± SE", x=0.54, y=0.84, angle=90, size=10) +
-  draw_label("Cercariael production ± SE", x=0.54, y=0.52, angle=90, size=10) +
+  draw_label("Snail eggs, # ± SE", x=0.54, y=0.84, angle=90, size=10) +
+  draw_label("Cercarial production, # ± SE", x=0.54, y=0.52, angle=90, size=10) +
 
   # x-axis labels
   draw_label("Week", x = 0.55, y = 0.01, size=10, vjust=0) +
@@ -405,8 +430,8 @@ p3A =  ggplot(data=manage_peri_data, aes(x=Week, y=fit, group=Treat, colour=Trea
   geom_point(data=management_summary, aes(x=Week, y=Periphyton, colour=Treat), inherit.aes=F) +
   geom_linerange(data=management_summary, aes(x=Week, ymin=Periphyton - Periphyton_SE,
             ymax=Periphyton + Periphyton_SE, colour=Treat), inherit.aes = F) +
-  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
-  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+  scale_color_manual(values=c("green3", "chocolate4", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "chocolate4", "blue"), na.value=NA)
 
 p3A
 
@@ -431,8 +456,8 @@ p3B =  ggplot(data=manage_abund_data, aes(x=Week, y=fit, group=Treat, colour=Tre
   geom_point(data=management_summary, aes(x=Week, y=Abundance, colour=Treat), inherit.aes=F) +
   geom_linerange(data=management_summary, aes(x=Week, ymin=Abundance - Abundance_SE,
             ymax=Abundance + Abundance_SE, colour=Treat), inherit.aes = F) +
-  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
-  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+  scale_color_manual(values=c("green3", "chocolate4", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "chocolate4", "blue"), na.value=NA)
 
 p3B
 
@@ -456,8 +481,8 @@ p3C =  ggplot(data=manage_biomass_data, aes(x=Week, y=fit, group=Treat, colour=T
   geom_point(data=management_summary, aes(x=Week, y=Biomass, colour=Treat), inherit.aes=F) +
   geom_linerange(data=management_summary, aes(x=Week, ymin=Biomass - Biomass_SE,
             ymax=Biomass + Biomass_SE, colour=Treat), inherit.aes = F) +
-  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
-  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+  scale_color_manual(values=c("green3", "chocolate4", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "chocolate4", "blue"), na.value=NA)
 
 p3C
 
@@ -482,8 +507,8 @@ p3D =  ggplot(data=manage_egg_data, aes(x=Week, y=fit, group=Treat, colour=Treat
   geom_point(data=management_summary, aes(x=Week, y=Eggs, colour=Treat), inherit.aes=F) +
   geom_linerange(data=management_summary, aes(x=Week, ymin=Eggs - Eggs_SE,
             ymax=Eggs + Eggs_SE, colour=Treat), inherit.aes = F) +
-  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
-  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+  scale_color_manual(values=c("green3", "chocolate4", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "chocolate4", "blue"), na.value=NA)
 
 p3D
 
@@ -511,12 +536,12 @@ p3E =  ggplot(data=manage_cerc_data, aes(x=Week, y=fit, group=Treat, colour=Trea
   geom_point(data=management_summary, aes(x=Week, y=Cercariae, colour=Treat), inherit.aes=F) +
   geom_linerange(data=management_summary, aes(x=Week, ymin=Cercariae - Cercariae_SE,
             ymax=Cercariae + Cercariae_SE, colour=Treat), inherit.aes = F) +
-  scale_color_manual(values=c("green3", "black", "blue"), na.value=NA) +
-  scale_fill_manual(values=c("green3", "black", "blue"), na.value=NA)
+  scale_color_manual(values=c("green3", "chocolate4", "blue"), na.value=NA) +
+  scale_fill_manual(values=c("green3", "chocolate4", "blue"), na.value=NA)
 
 p3E
 
-spacer = ggplot(data=p1Efit, aes(x=Week, y=fit)) +
+spacer = ggplot(data=manage_cerc_data, aes(x=Week, y=fit)) +
   geom_blank() + theme_void()
 
 Fig3 = plot_grid(spacer,p3A, spacer, p3D,
@@ -525,11 +550,11 @@ Fig3 = plot_grid(spacer,p3A, spacer, p3D,
                  spacer,spacer, spacer, spacer,
                  align="v", ncol=4, nrow=4, axis="rltb", rel_heights=c(1, 1, 1, 0.1), rel_widths = c(0.08, 1, 0.12, 1)) +
   # y-axis labels
-  draw_label("Periphyton productivity ± SE", x=0.03, y=0.84, angle=90, size=10) +
-  draw_label("Snail abundance ± SE", x=0.03, y=0.52, angle=90, size=10) +
+  draw_label("Periphyton productivity, AU ± SE", x=0.03, y=0.84, angle=90, size=10) +
+  draw_label("Snail abundance, # ± SE", x=0.03, y=0.52, angle=90, size=10) +
   draw_label("Snail biomass, mg ± SE", x=0.03, y=0.21, angle=90, size=10) +
-  draw_label("Snail eggs ± SE", x=0.54, y=0.84, angle=90, size=10) +
-  draw_label("Cercariael production ± SE", x=0.54, y=0.52, angle=90, size=10) +
+  draw_label("Snail eggs, # ± SE", x=0.54, y=0.84, angle=90, size=10) +
+  draw_label("Cercarial production, # ± SE", x=0.54, y=0.52, angle=90, size=10) +
 
   
   # x-axis labels
@@ -545,7 +570,7 @@ Fig3 = plot_grid(spacer,p3A, spacer, p3D,
 # legend
   draw_label("Management status", x=0.78, y=0.23, size=11)+
   draw_label("•", x=0.71, y=0.20, size=28, colour="green3")+ draw_label("Unmanaged", x=0.73, y=0.20, size=10, hjust=0)+ # Alt+0149 for bullet point
-  draw_label("•", x=0.71, y=0.18, size=28, colour="black")+ draw_label("Destruction", x=0.73, y=0.18, size=10, hjust=0)+
+  draw_label("•", x=0.71, y=0.18, size=28, colour="chocolate4")+ draw_label("Destruction", x=0.73, y=0.18, size=10, hjust=0)+
     draw_label("•", x=0.71, y=0.16, size=28, colour="blue")+ draw_label("Removal", x=0.73, y=0.16, size=10, hjust=0)
 
 Fig3
@@ -581,11 +606,131 @@ summary(m1)
 Fig4 = ggplot(data = cumulative_cercs, aes(x = Treatment, y = Cercariae)) + geom_boxplot()  +
       theme(axis.ticks.length = unit(-1.5, "mm"),
             axis.title = element_text(size=14),
-            axis.text = element_text(size=11)) +  xlab("Treatment") +  ylab("Cumulative Cercarial production") +
+            axis.text = element_text(size=11)) +  xlab("Treatment") +  ylab("Cumulative Cercarial production, #") +
       annotate("text", x = 3, y = 4500, label = "*", size=10) + annotate("text", x = 4, y = 5500, label = "*", size=10) 
 
 Fig4
 ggsave(filename = "C:/RData/Fig4_Hyacinth.png", plot=Fig4, scale=1)
+
+```
+```{r FigS2}
+
+m1 = gamm(Biomass ~ s(Week)+ s(Week, by = IsHyacinth)+ s(Tank, bs="re") + offset(log(Abundance)), niterPQL=50,
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=invasion2)
+summary(m1$gam)
+
+
+# Panel S2A - Snail biomass invasion
+pS2Afit = plot_smooth(m1$gam, view="Week", plot_all=c("IsHyacinth"), cond = list(Abundance = 1), rug=F, transform=exp, 
+                     se=1, shade=T, ylab="Response", rm.ranef=T, xlab="Time (weeks)", hide.label=T)$fv
+pS2Afit[,"IsHyacinth"] = as.factor(p2Cfit[,"IsHyacinth"])
+
+
+FigS2A =  ggplot(data=pS2Afit, aes(x=Week, y=fit, group=IsHyacinth, colour=IsHyacinth)) +
+  theme(legend.position = c(0.7, 0.9),
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+  geom_line() + geom_ribbon(aes(ymin=ll, ymax=ul, fill=IsHyacinth, colour=NA), alpha=0.2) +
+  scale_color_manual(name = "Invasion", values=c("black", "green3"), na.value=NA, labels = c("Uninvaded", "Hyacinth")) +
+  scale_fill_manual(name = "Invasion", values=c("black", "green3"), na.value=NA, labels = c("Uninvaded", "Hyacinth")) + 
+  geom_point(data=invasion_summary, aes(x=Week, y=Mean_size , colour=IsHyacinth, group=IsHyacinth)) +
+  geom_linerange(data=invasion_summary, aes(x=Week, ymin=Mean_size  - Mean_size_SE,
+                                        ymax=Mean_size  + Mean_size_SE, colour=IsHyacinth), inherit.aes = F) 
+FigS2A
+
+m2 = gamm(Biomass ~  s(Week) + s(chop_time) + s(removed_time) + s(Tank, bs="re") + offset(log(Abundance)), niterPQL=50,
+           family=Gamma(link="log"), correlation=corCAR1(form=~Week|Tank), data=management2)
+
+summary(m2$gam)
+plot(m2$gam) # Chopped caused a bump in biomass
+
+# Data frame to extract predictions
+manage_pred_data = subset(management, Tank %in% c(2, 3, 17), select = c("Tank", "Treat", "Week", "chop_time", "removed_time"))
+manage_pred_data[,"Abundance"] = 1
+
+# Fig S2B - snail biomass invasion management
+pred <- predict(m2$gam, newdata=manage_pred_data, type = 'link', se.fit = TRUE, exclude="s(Tank)")
+pred$ll = exp(pred$fit - pred$se.fit)
+pred$ul = exp(pred$fit + pred$se.fit)
+pred$fit = exp(pred$fit)
+
+manage_biomass_data = data.frame(manage_pred_data, pred)
+
+# Prepare mean biomass means and SEs from the management2 dataframe (excludes NAs in Biomass)
+meansize_mean = aggregate(Mean_size ~ Week*Treat, FUN=mean, data=management2)
+meansize_SE = aggregate(Mean_size ~ Week*Treat, FUN=SEM, data=management2)
+meansize_summary = data.frame(meansize_mean, "meansize_SE" = meansize_SE$Mean_size)
+
+FigS2B =  ggplot(data=manage_biomass_data, aes(x=Week, y=fit, group=Treat, colour=Treat)) +
+  theme(legend.position = c(0.7, 0.9),
+        axis.ticks.length = unit(-1.5, "mm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size=8, margin = margin(t=3)),
+        axis.text.y = element_text(size=8, margin = margin(r=3))) + 
+        geom_line() + geom_ribbon(data=manage_biomass_data, aes(ymin=ll, ymax=ul, fill=Treat, colour=NA), 
+            alpha=0.2) +
+  geom_point(data=meansize_summary, aes(x=Week, y=Mean_size, colour=Treat), inherit.aes=F) +
+  geom_linerange(data=meansize_summary, aes(x=Week, ymin=Mean_size - meansize_SE,
+            ymax=Mean_size + meansize_SE, colour=Treat), inherit.aes = F) +
+  scale_color_manual(name= "Management", values=c("green3", "chocolate4", "blue"), na.value=NA, labels = c("None", "Destruction", "Removal")) +
+  scale_fill_manual(name= "Management", values=c("green3", "chocolate4", "blue"), na.value=NA, labels = c("None", "Destruction", "Removal"))
+
+FigS2B
+
+FigS2 = plot_grid(spacer, FigS2A,
+                  spacer, FigS2B,
+                 align="v", ncol=2, nrow=2, rel_widths = c(0.05, 1), axis="rltb") +
+  # y-axis labels
+
+  draw_label("Mean snail biomass, mg ± SE", x=0.03, y=0.5, angle=90, size=12) +
+
+  # x-axis labels
+  draw_label("Week", x = 0.5, y = 0.01, size=12, vjust=0) +
+  # panel labels
+  draw_label("A", x = 0.13, y = 0.97, size=10) + 
+  draw_label("B", x = 0.13, y = 0.49, size=10) 
+
+FigS2
+
+save_plot("C:/RData/FigS2_Hyacinth.png", FigS2, ncol=1, nrow=2, base_height=4, base_asp = 1.1, dpi=600, units="in")
+
+
+```
+```{r rideglines}
+# library
+library(ggridges)
+
+# basic example
+ggplot(data=hya, aes(x = Length, y = as.factor(Week))) +  geom_density_ridges() +
+  theme_ridges() + 
+  theme(legend.position = "none")
+
+chop_tanks = subset(labels, Treat == "Hyacinth.Chop")[,"Tank"]
+hyacinth_tanks = subset(labels, Treat == "Hyacinth")[,"Tank"]
+
+hya_chop = subset(hya, Tank %in% chop_tanks)
+hya_chop[,"Treatment"] = "Destruction"
+hya_inv = subset(hya, Tank %in% hyacinth_tanks)
+hya_inv[,"Treatment"] = "Unmanaged"
+
+hya_size = rbind(hya_chop, hya_inv)
+
+FigS3 = ggplot(hya_size, aes(y=as.factor(Week),
+                      x=Length,
+                      fill=Treatment)) +
+  geom_density_ridges(alpha=0.33, scale=1) +
+  scale_y_discrete(expand = c(0.01, 0)) +  
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = c("chocolate4", "green3")) + ylab("Week") + xlab("Snail shell length")
+
+FigS3
+
+ggsave2(filename="C:/RData/FigS3_Hyacinth.png", plot=FigS3)
+
 
 ```
 
